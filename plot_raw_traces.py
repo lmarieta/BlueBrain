@@ -1,18 +1,27 @@
-from read_mat_rcell import read_mat_all_rcell
+from read_mat_rcell import get_all_rcell_names, read_mat_rcell
 import matplotlib.pyplot as plt
 from read_cell import get_all_cells
 import re
+import time
+import os
+from read_cell import UnsupportedFileTypeError
 
 
 def plot_raw_traces(path: str, protocol: str, acells: dict):
-    all_cells = read_mat_all_rcell(path)
+    all_cells = get_all_rcell_names(path)
 
     # unique combinations of brain area, cell type and species
     brain_areas = set()
     cell_type_groups = set()
     species = set()
-    for _, cell in all_cells.items():
-        cell_info = cell.get('cellInfo', {})
+    rcell = {}
+    for cell_name in all_cells:
+        try:
+            rcell = read_mat_rcell(os.path.join(path, cell_name + '.mat'))
+        except UnsupportedFileTypeError as e:
+            print(f"Unsupported file type error: {e}")
+            continue
+        cell_info = rcell.get('cellInfo', {})
         brain_area = cell_info.get('BrainArea')
         cell_type_group = cell_info.get('CellTypeGroup')
         specie = cell_info.get('Species')
@@ -22,25 +31,29 @@ def plot_raw_traces(path: str, protocol: str, acells: dict):
 
     stims = get_stimuli(acells, protocol)
 
-    for stim in stims:
-        for brain_area in brain_areas:
-            for cell_type in cell_type_groups:
-                for specie in species:
-                    plt.figure()
-                    for _, cell in all_cells.items():
-                        cell_name = cell['cellInfo']['CellName']
-                        acell_name = 'aC' + cell_name[1:]
-                        try:
-                            acell = acells[acell_name]
-                        except KeyError:
-                            print(f"{acell_name} not found in acells. Skipping.")
-                            break
-                        if (cell['cellInfo']['Species'] == specie
-                                and cell['cellInfo']['BrainArea'] == brain_area
-                                and cell['cellInfo']['CellTypeGroup'] == cell_type):
+    for cell_name in all_cells:
+        try:
+            rcell = read_mat_rcell(os.path.join(path, cell_name + '.mat'))
+        except UnsupportedFileTypeError as e:
+            print(f"Unsupported file type error: {e}")
+            continue
+        cell_name = rcell['cellInfo']['CellName']
+        acell_name = 'aC' + cell_name[1:]
+        try:
+            acell = acells[acell_name]
+        except KeyError:
+            continue
+        for stim in stims:
+            for brain_area in brain_areas:
+                for cell_type in cell_type_groups:
+                    for specie in species:
+                        plt.figure()
+                        if (rcell['cellInfo']['Species'] == specie
+                                and rcell['cellInfo']['BrainArea'] == brain_area
+                                and rcell['cellInfo']['CellTypeGroup'] == cell_type):
                             acell_data = [element for element in acell['protocol']
                                           if element.get('name') == protocol][0]
-                            for repetition_index, repetition in cell[protocol].items():
+                            for repetition_index, repetition in rcell[protocol].items():
                                 for sweep_index, sweep in repetition.items():
                                     match = re.search(r'repetition: (\d+)', repetition_index)
                                     rep_idx = int(match.group(1))
@@ -61,7 +74,8 @@ def plot_raw_traces(path: str, protocol: str, acells: dict):
                     plt.title(brain_area + ', ' + cell_type + ', ' + specie + ', ' + str(stim) + 'mA')
                     plt.grid(True)
                     plt.legend()
-                    plt.show()
+                    plt.close()
+                    # plt.show()
 
 
 def get_second_ap_indices(acell, repetition, sweep):
@@ -104,5 +118,23 @@ if __name__ == "__main__":
     acells_path = '/home/lucas/BBP/Data/jsonData'
     # ['FirePattern', 'IDRest', 'HyperDePol', 'IV', 'PosCheops', 'APWaveform', 'DeHyperPol', 'sAHP']
     protocol = 'IDRest'
+    start_time = time.time()
     acells = get_all_cells(acells_path)
+    # Record the end time
+    end_time = time.time()
+
+    # Calculate the elapsed time
+    elapsed_time = end_time - start_time
+
+    # Print the result
+    print(f"Script execution time: {elapsed_time:.2f} seconds")
+    start_time = time.time()
     plot_raw_traces(path=raw_path, protocol=protocol, acells=acells)
+    # Record the end time
+    end_time = time.time()
+
+    # Calculate the elapsed time
+    elapsed_time = end_time - start_time
+
+    # Print the result
+    print(f"Script execution time: {elapsed_time:.2f} seconds")

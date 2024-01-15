@@ -45,7 +45,7 @@ def read_mat_rcell(path: str):
     return data
 
 
-def read_mat_all_rcell(path: str):
+def get_all_rcell_names(path: str):
     file_list = os.listdir(path)
 
     # Check that there are files in folder_path
@@ -54,21 +54,11 @@ def read_mat_all_rcell(path: str):
     else:
         print('File names loaded.')
 
-    # Create a dictionary containing the data from all files present in folder_path.
-    # Keys are the cell ids and values the content of the rcell files.
-    all_cells = {}
-    for file_name in file_list:
-        rcell = {}
-        try:
-            rcell = read_mat_rcell(os.path.join(path, file_name))
-        except UnsupportedFileTypeError as e:
-            print(f"Unsupported file type error: {e}")
-            raise
-        all_cells[rcell['cellInfo']['CellName']] = rcell
+    all_cells = [file_name.split('.')[0] for file_name in file_list]
 
     return all_cells
 
 
 if __name__ == "__main__":
     path = '/home/lucas/BBP/Data/rCells'
-    all_cells = read_mat_all_rcell(path)
+    all_cells = get_all_rcell_names(path)

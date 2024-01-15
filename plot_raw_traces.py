@@ -15,11 +15,16 @@ def plot_raw_traces(path: str, protocol: str, acells: dict):
     cell_type_groups = set()
     species = set()
     rcell = {}
+    i = 0
+    n = len(all_cells)
     for cell_name in all_cells:
         try:
             rcell = read_mat_rcell(os.path.join(path, cell_name + '.mat'))
         except UnsupportedFileTypeError as e:
             print(f"Unsupported file type error: {e}")
+            continue
+        except (AttributeError, IndexError):
+            print('Error for cell: ' + cell_name)
             continue
         cell_info = rcell.get('cellInfo', {})
         brain_area = cell_info.get('BrainArea')
@@ -28,14 +33,22 @@ def plot_raw_traces(path: str, protocol: str, acells: dict):
         brain_areas.add(brain_area)
         cell_type_groups.add(cell_type_group)
         species.add(specie)
+        print(f'Loading {i/n*100:.2f}%')
+        i = i + 1
 
     stims = get_stimuli(acells, protocol)
-
+    i = 0
+    n = len(all_cells)
     for cell_name in all_cells:
+        print(f'Loading {i/n*100:.2f}%')
+        i = i+1
         try:
             rcell = read_mat_rcell(os.path.join(path, cell_name + '.mat'))
         except UnsupportedFileTypeError as e:
             print(f"Unsupported file type error: {e}")
+            continue
+        except (AttributeError, IndexError):
+            print('Error for cell: ' + cell_name)
             continue
         cell_name = rcell['cellInfo']['CellName']
         acell_name = 'aC' + cell_name[1:]
@@ -69,13 +82,13 @@ def plot_raw_traces(path: str, protocol: str, acells: dict):
                                             label = f'{cell_name}, {repetition_index}, {sweep_index}'
                                             plt.plot(x, y, label=label)
 
-                    plt.xlabel('t[s]')
-                    plt.ylabel('Voltage[mV]')
-                    plt.title(brain_area + ', ' + cell_type + ', ' + specie + ', ' + str(stim) + 'mA')
-                    plt.grid(True)
-                    plt.legend()
-                    plt.close()
-                    # plt.show()
+                        plt.xlabel('t[s]')
+                        plt.ylabel('Voltage[mV]')
+                        plt.title(brain_area + ', ' + cell_type + ', ' + specie + ', ' + str(stim) + 'mA')
+                        plt.grid(True)
+                        plt.legend(labelcolor='none')
+                        plt.close()
+                        # plt.show()
 
 
 def get_second_ap_indices(acell, repetition, sweep):
@@ -114,8 +127,8 @@ def get_stimuli(acells, protocol):
 
 
 if __name__ == "__main__":
-    raw_path = '/home/lucas/BBP/Data/rCells'
-    acells_path = '/home/lucas/BBP/Data/jsonData'
+    raw_path = 'C:\\Projects\\ASSProject\\Data\\matData'
+    acells_path = 'C:\\Projects\\ASSProject\\Analysis\\Data\\jsonData'
     # ['FirePattern', 'IDRest', 'HyperDePol', 'IV', 'PosCheops', 'APWaveform', 'DeHyperPol', 'sAHP']
     protocol = 'IDRest'
     start_time = time.time()

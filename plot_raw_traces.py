@@ -144,7 +144,7 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                                 'Threshold stimulus']
                                 if plot_mean:
                                     # Append each individual trace to the list
-                                    all_traces.append(np.array(y))
+                                    all_traces.append(y)
 
                                 if plot_all_traces or plot_mean:
                                     unique_label = f'{brain_area}_{cell_type}_{specie}'
@@ -176,30 +176,54 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                                     )
                                     legend_data.append(trace)
                     if plot_mean:
-                        # Calculate the mean of all traces
-                        mean_trace = np.mean(np.array(all_traces), axis=0)
-                        # Fit a curve to the mean trace (adjust model as needed)
-                        fit_params, _ = curve_fit(polynomial_fit, x, all_traces)
+                        # Find the length of the longest list
+                        max_length = max(map(len, all_traces))
 
-                        # Evaluate the fitted curve
-                        fit_y = polynomial_fit(x, *fit_params)
+                        # Put all traces in a single structure
+                        all_padded_traces = np.full((len(all_traces), max_length), np.nan)
 
-                        unique_label = f'{brain_area}_{cell_type}_{specie}_mean_fit'
-                        hover_text = [f'{y_val:.2f} {unique_label}' for y_val in fit_y]
+                        # Fill the array with the values from the time traces
+                        for i, sublist in enumerate(all_traces):
+                            all_padded_traces[i, :len(sublist)] = sublist
 
-                        trace_fit = go.Scatter(
+                        # Mean trace
+                        y = np.mean(all_padded_traces, axis=0)
+                        # confidence interval
+                        std_values = np.nanstd(all_padded_traces, axis=0)
+
+                        unique_label = f'{brain_area}_{cell_type}_{specie}'
+                        hover_text = [f'{y_val:.2f} {unique_label}' for y_val in y]
+                        color = color_map[(specie, brain_area, cell_type)]
+
+                        trace = go.Scatter(
                             x=x,
-                            y=fit_y,
+                            y=y,
                             mode='lines',
                             name=unique_label,
                             hoverinfo='text',  # Show hover text
                             text=hover_text,  # Hover text for each point
                             line=dict(
-                                color='black',  # Set color for fitted curve
+                                color=color,  # Set color for fitted curve
                             ),
                         )
+                        # Create traces for the shaded region (dashed lines)
+                        trace_upper_bound = go.Scatter(
+                            x=x,
+                            y=y + std_values,
+                            mode='lines',
+                            line=dict(color=color, dash='dash'),
+                            name=f'+1 std ({unique_label})'
+                        )
 
-                        legend_data_fit.append(trace_fit)
+                        trace_lower_bound = go.Scatter(
+                            x=x,
+                            y=y - std_values,
+                            mode='lines',
+                            line=dict(color=color, dash='dash'),
+                            name=f'-1 std ({unique_label})'
+                        )
+
+                        legend_data.extend([trace, trace_upper_bound, trace_lower_bound])
                     # Create layout
                     title = f'{protocol}' if plot_all_traces else f'{protocol}, {brain_area}, {cell_type}, {specie}'
                     layout = go.Layout(
@@ -211,7 +235,7 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                     fig = go.Figure(data=legend_data, layout=layout)
 
                     # Save the figure as an HTML file
-                    if plot_all_traces:
+                    if plot_all_traces and not plot_mean:
                         figure_name = f'{protocol}_raw_traces_first_AP.html'
                     elif plot_mean:
                         figure_name = f'{protocol}_mean_raw_traces_first_AP.html'
@@ -315,7 +339,7 @@ if __name__ == "__main__":
     # ['FirePattern', 'IDRest', 'HyperDePol', 'IV', 'PosCheops', 'APWaveform', 'DeHyperPol', 'sAHP']
     protocol = 'IDRest'
     plot_all_traces = True
-    plot_mean = True
+    plot_mean = False
 
     start_time = time.time()
     plot_raw_traces(rcell_path=rcell_path, acells_path=acells_path, db_path=db_path, output_path=output_path,

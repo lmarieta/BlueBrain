@@ -1,4 +1,4 @@
-def get_trace_indices(protocol_to_plot, threshold_key, repetition=None):
+def get_trace_indices(protocol_to_plot, threshold_key='spikecount', repetition=None):
     if protocol_to_plot in ['sAHP', 'DeHyperPol']:
         trace_indices = [idx for idx, n_spikes in enumerate(repetition[threshold_key]) if n_spikes > 0]
     elif protocol_to_plot in ['FirePattern', 'IV']:

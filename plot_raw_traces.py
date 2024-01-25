@@ -11,11 +11,11 @@ import plotly.graph_objects as go
 from CellCount import load_data
 from get_trace_indices import get_trace_indices
 import plotly.express as px
-from scipy.optimize import curve_fit
+import platform
 
 
-def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path:str, protocol: str,
-                    threshold_key='spikecount', plot_all_traces=False, plot_mean=False):
+def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path: str, protocol: str,
+                    threshold_key='spikecount', plot_type='plot_all_traces', repetition_index=[]):
     df = pd.DataFrame(columns=['cell_names', 'BrainArea', 'CellTypeGroup', 'Species', 'repetition',
                                'sweep', 'Threshold stimulus'])
     df['cell_names'] = get_all_rcell_names(rcell_path)
@@ -52,9 +52,7 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
     # Create color maps based on stimulus
     stim_values = np.unique(df['Threshold stimulus'])
 
-
-
-    if plot_all_traces or plot_mean:
+    if plot_type in ['plot_all_traces', 'plot_mean']:
         # Create a color scale
         color_scale = px.colors.qualitative.Light24
         # Map each specie, brain area, cell type to a color
@@ -75,7 +73,6 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
     i = 0
     n = len(df['cell_names'].unique())
     legend_data = []
-    used_labels = {}
     for brain_area in brain_areas:
         for cell_type in cell_type_groups:
             for specie in species:
@@ -87,12 +84,10 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                 cells_to_plot = set(cells_to_plot)
                 if cells_to_plot:
                     label_key = (specie, brain_area, cell_type)
-                    if label_key not in used_labels:
-                        used_labels[label_key] = set()
-                    # Create a single figure for each combination of specie, brain area, and cell type
-                    if not plot_all_traces:
+                    # Prepare structures for figures
+                    if plot_type == 'plot_single_groups':
                         legend_data = []
-                    if plot_mean:
+                    if plot_type == 'plot_mean':
                         all_traces = []
                     for cell_name in cells_to_plot:
                         try:
@@ -114,8 +109,12 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
 
                         acell_data = [element for element in acell['protocol']
                                       if element.get('name') == protocol][0]
-                        for repetition_index, repetition in rcell[protocol].items():
-                            match = re.search(r'repetition: (\d+)', repetition_index)
+                        repetitions = rcell[protocol]
+                        if repetition_index:
+                            keys = ['repetition: ' + str(idx) for idx in repetition_index]
+                            repetitions = {key: repetitions[key] for key in keys}
+                        for rep_idx, repetition in repetitions.items():
+                            match = re.search(r'repetition: (\d+)', rep_idx)
                             rep_idx = int(match.group(1))
                             sweep_idx = df.loc[(df['cell_names'] == cell_name) & (df['repetition'] == rep_idx), 'sweep']
                             if not sweep_idx.empty:
@@ -142,27 +141,19 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                                 y = [item for sublist in y for item in sublist]
                                 stim = df.loc[(df['cell_names'] == cell_name) & (df['repetition'] == rep_idx),
                                 'Threshold stimulus']
-                                if plot_mean:
+                                if plot_type == 'plot_mean':
                                     # Append each individual trace to the list
                                     all_traces.append(y)
 
-                                if plot_all_traces or plot_mean:
-                                    unique_label = f'{brain_area}_{cell_type}_{specie}'
 
-                                    if label_key not in used_labels:
-                                        used_labels[label_key] = set()
-                                    if unique_label not in used_labels[label_key]:
-                                        used_labels[label_key].add(unique_label)
-                                else:
-                                    unique_label = (f'{cell_name}, {repetition_index}, sweep {sweep_idx}, stim '
-                                         f'{stim.values[0]:.0f}mA')
-                                if not plot_mean:
-                                    used_labels[label_key].add(unique_label)
+                                unique_label = (f'{cell_name}, repetition {rep_idx}, sweep {sweep_idx}, stim '
+                                                f'{stim.values[0]:.0f}mA')
+                                if plot_type != 'plot_mean':
                                     hover_text = [f'{y_val:.2f} {label}' for y_val, label in
                                                   zip(y, [unique_label] * len(y))]
                                     # Create a scatter plot with hover text
-                                    color = color_map[(specie, brain_area, cell_type)] if plot_all_traces \
-                                        else color_map[stim.values[0]]
+                                    color = color_map[(specie, brain_area, cell_type)] if \
+                                        plot_type == 'plot_all_traces' else color_map[stim.values[0]]
                                     trace = go.Scatter(
                                         x=x,
                                         y=y,
@@ -175,7 +166,7 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                                         ),
                                     )
                                     legend_data.append(trace)
-                    if plot_mean:
+                    if plot_type == 'plot_mean':
                         # Find the length of the longest list
                         max_length = max(map(len, all_traces))
 
@@ -203,7 +194,7 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                             hoverinfo='text',  # Show hover text
                             text=hover_text,  # Hover text for each point
                             line=dict(
-                                color=color,  # Set color for fitted curve
+                                color=color,  # Set color
                             ),
                         )
                         # Create traces for the shaded region (dashed lines)
@@ -225,7 +216,10 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
 
                         legend_data.extend([trace, trace_upper_bound, trace_lower_bound])
                     # Create layout
-                    title = f'{protocol}' if plot_all_traces else f'{protocol}, {brain_area}, {cell_type}, {specie}'
+                    if plot_type in ['plot_all_traces', 'plot_mean']:
+                        title = f'{protocol}'
+                    else:
+                        title = f'{protocol}, {brain_area}, {cell_type}, {specie}'
                     layout = go.Layout(
                         title=title,
                         xaxis=dict(title='t[s]'),
@@ -235,12 +229,17 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                     fig = go.Figure(data=legend_data, layout=layout)
 
                     # Save the figure as an HTML file
-                    if plot_all_traces and not plot_mean:
-                        figure_name = f'{protocol}_raw_traces_first_AP.html'
-                    elif plot_mean:
-                        figure_name = f'{protocol}_mean_raw_traces_first_AP.html'
+                    if plot_type == 'plot_all_traces':
+                        figure_name = f'{protocol}_raw_traces_first_AP'
+                    elif plot_type == 'plot_mean':
+                        figure_name = f'{protocol}_mean_raw_traces_first_AP'
                     else:
-                        figure_name = f'{protocol}_{brain_area}_{cell_type}_{specie}_raw_traces_first_AP.html'
+                        figure_name = f'{protocol}_{brain_area}_{cell_type}_{specie}_raw_traces_first_AP'
+                    if repetition_index:
+                        figure_name = f'{figure_name}_repetition'
+                        for idx in repetition_index:
+                            figure_name = f'{figure_name}_{idx}'
+                    figure_name = figure_name + '.html'
                     figure_path = os.path.join(output_path, figure_name)
                     fig.write_html(figure_path)
 
@@ -324,26 +323,43 @@ def get_stimuli(acells, df, threshold_key, protocol):
     return result_df
 
 
-def polynomial_fit(x, *coefficients):
-    """
-    Polynomial fit function of degree 10
-    """
-    return np.polyval(coefficients, x)
+def check_inputs(protocol: str, plot_type: str):
+    protocol_list = ['IDRest', 'APWaveform']
+    if protocol not in protocol_list:
+        raise ValueError(f'Select the protocol_list in the available list {protocol_list}')
+    plot_list = ['plot_mean', 'plot_all_traces', 'plot_single_groups']
+    if plot_type not in plot_list:
+        raise ValueError(f'Select the plot_type in the available list {plot_list}')
+
+
+def get_paths(current_os: str, plot_type: str):
+    if current_os == 'Windows':
+        rcell_path = 'C:\\Projects\\ASSProject\\Data\\matData'
+        acells_path = 'C:\\Projects\\ASSProject\\Analysis\\Data\\jsonData'
+        db_path = 'C:\\Projects\\ASSProject\\Analysis\\CellList30-May-2022.csv'
+        if plot_type != 'plot_single_groups':
+            output_path = 'C:\\Projects\\ASSProject\\Analysis\\Images\\raw_traces_first_AP_comparisons'
+        else:
+            output_path = 'C:\\Projects\\ASSProject\\Analysis\\Images\\raw_traces_first_AP'
+    else:
+        raise ValueError('to be implemented')
+
+    return rcell_path, acells_path, db_path, output_path
 
 
 if __name__ == "__main__":
-    rcell_path = 'C:\\Projects\\ASSProject\\Data\\matData'
-    acells_path = 'C:\\Projects\\ASSProject\\Analysis\\Data\\jsonData'
-    db_path = 'C:\\Projects\\ASSProject\\Analysis\\CellList30-May-2022.csv'
-    output_path = 'C:\\Projects\\ASSProject\\Analysis\\Images\\raw_traces_first_AP_comparisons'
-    # ['FirePattern', 'IDRest', 'HyperDePol', 'IV', 'PosCheops', 'APWaveform', 'DeHyperPol', 'sAHP']
     protocol = 'IDRest'
-    plot_all_traces = True
-    plot_mean = False
+    plot_type = 'plot_all_traces'  # ['plot_mean', 'plot_all_traces', 'plot_single_groups']
+    # get operating system
+    current_os = platform.system()
+    rcell_path, acells_path, db_path, output_path = get_paths(current_os, plot_type)
+
+    # Change here if you want to plot a specific repetition, index starts at 0.
+    repetition_index = [0]
 
     start_time = time.time()
     plot_raw_traces(rcell_path=rcell_path, acells_path=acells_path, db_path=db_path, output_path=output_path,
-                    protocol=protocol, plot_all_traces=plot_all_traces, plot_mean=plot_mean)
+                    protocol=protocol, plot_type=plot_type, repetition_index=repetition_index)
     # Record the end time
     end_time = time.time()
 

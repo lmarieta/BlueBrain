@@ -137,8 +137,14 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
 
                                 x = sweep['t'][start_idx:end_idx] - sweep['t'][start_idx]
                                 y = sweep['data'][start_idx:end_idx]
+                                # Get indices where values in x are below the threshold
                                 x = [item for sublist in x for item in sublist]
                                 y = [item for sublist in y for item in sublist]
+                                # only keep the first 5ms because an AP is shorter than that
+                                time_threshold = 0.005
+                                indices_to_truncate = [index for index, item in enumerate(x) if item < time_threshold]
+                                x = x[:max(indices_to_truncate) + 1]
+                                y = y[:max(indices_to_truncate) + 1]
                                 stim = df.loc[(df['cell_names'] == cell_name) & (df['repetition'] == rep_idx),
                                 'Threshold stimulus']
                                 if plot_type == 'plot_mean':
@@ -348,8 +354,8 @@ def get_paths(current_os: str, plot_type: str):
 
 
 if __name__ == "__main__":
-    protocol = 'IDRest'
-    plot_type = 'plot_all_traces'  # ['plot_mean', 'plot_all_traces', 'plot_single_groups']
+    protocol = 'APWaveform'
+    plot_type = 'plot_single_groups'  # ['plot_mean', 'plot_all_traces', 'plot_single_groups']
     # get operating system
     current_os = platform.system()
     rcell_path, acells_path, db_path, output_path = get_paths(current_os, plot_type)

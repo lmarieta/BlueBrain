@@ -125,11 +125,18 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                                                                          sweep=sweep_idx)
                                 except Exception as e:
                                     # Log the information to a text file
-                                    with open('error_log.txt', 'a+') as log_file:
-                                        log_file.write(
-                                            f"Error for Protocol: {protocol}, Cell: {cell_name}, Repetition: {rep_idx}"
-                                            f", Sweep: {sweep_idx}\n")
-                                        continue
+                                    error_message = (f"Error for Protocol: {protocol}, Cell: {cell_name}, "
+                                                     f"Repetition: {rep_idx}, Sweep: {sweep_idx}\n")
+
+                                    # Check if the error message is not already in the file
+                                    with open('error_log.txt', 'r') as log_file:
+                                        log_content = log_file.read()
+
+                                    if error_message not in log_content:
+                                        # If not present, append the error message to the file
+                                        with open('error_log.txt', 'a+') as log_file:
+                                            log_file.write(error_message)
+                                    continue
                                 # Find the index of the closest time in x
                                 start_idx = np.argmin(np.abs(np.array(sweep['t']) - start_time))
                                 end_idx = get_second_ap_indice(acell=acell_data, repetition=rep_idx,
@@ -153,7 +160,7 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
 
 
                                 unique_label = (f'{cell_name}, repetition {rep_idx}, sweep {sweep_idx}, stim '
-                                                f'{stim.values[0]:.0f}mA')
+                                                f'{stim.values[0]:.0f}pA')
                                 if plot_type != 'plot_mean':
                                     hover_text = [f'{y_val:.2f} {label}' for y_val, label in
                                                   zip(y, [unique_label] * len(y))]
@@ -185,8 +192,6 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
 
                         # Mean trace
                         y = np.mean(all_padded_traces, axis=0)
-                        # confidence interval
-                        std_values = np.nanstd(all_padded_traces, axis=0)
 
                         unique_label = f'{brain_area}_{cell_type}_{specie}'
                         hover_text = [f'{y_val:.2f} {unique_label}' for y_val in y]
@@ -203,24 +208,8 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                                 color=color,  # Set color
                             ),
                         )
-                        # Create traces for the shaded region (dashed lines)
-                        trace_upper_bound = go.Scatter(
-                            x=x,
-                            y=y + std_values,
-                            mode='lines',
-                            line=dict(color=color, dash='dash'),
-                            name=f'+1 std ({unique_label})'
-                        )
 
-                        trace_lower_bound = go.Scatter(
-                            x=x,
-                            y=y - std_values,
-                            mode='lines',
-                            line=dict(color=color, dash='dash'),
-                            name=f'-1 std ({unique_label})'
-                        )
-
-                        legend_data.extend([trace, trace_upper_bound, trace_lower_bound])
+                        legend_data.extend([trace])
                     # Create layout
                     if plot_type in ['plot_all_traces', 'plot_mean']:
                         title = f'{protocol}'
@@ -354,7 +343,7 @@ def get_paths(current_os: str, plot_type: str):
 
 
 if __name__ == "__main__":
-    protocol = 'APWaveform'
+    protocol = 'IDRest'
     plot_type = 'plot_single_groups'  # ['plot_mean', 'plot_all_traces', 'plot_single_groups']
     # get operating system
     current_os = platform.system()

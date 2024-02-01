@@ -4,7 +4,7 @@ from read_cell import get_all_cells
 import os.path
 from preprocessing import data_preprocessing
 from get_features import get_features
-
+import pandas
 
 if __name__ == "__main__":
     all_cells = get_all_cells('/home/lucas/BBP/Data/jsonData')
@@ -28,6 +28,8 @@ if __name__ == "__main__":
                            name='Box Plot',
                            jitter=0.3,
                            hoverinfo='text',
+                           boxpoints='all',
+                           pointpos=0,
                            text=data[data['protocol'] == protocol]['CellName'])
             data = [trace]
 
@@ -37,7 +39,6 @@ if __name__ == "__main__":
             fig = go.Figure(data=data, layout=layout)
 
             pyo.plot(fig,
-                    filename=os.path.join(os.getcwd(),
-                                          'Images', protocol + '_' + feature_name + '_boxplot.html'),
-                    auto_open=True)
-
+                     filename=os.path.join(os.getcwd(),
+                                           'Images', protocol + '_' + feature_name + '_boxplot.html'),
+                     auto_open=True)

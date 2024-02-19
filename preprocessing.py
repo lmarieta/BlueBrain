@@ -25,7 +25,7 @@ def extract_values_from_trace(repetition, protocol_name, feature_name, trace_ind
         if (feature_name == 'firing_rate') and (len(repetition['ISI_values']) > 0):
             last_trace = repetition['ISI_values'][-1]
             value = np.median(last_trace)
-            value = 1/value
+            value = 1 / value
             feature_values.append(value)
         if feature_name == 'ISI_values' and len(repetition[feature_name]) > 0:
             last_trace = repetition[feature_name][-1]
@@ -47,13 +47,22 @@ def extract_values_from_trace(repetition, protocol_name, feature_name, trace_ind
     else:
         trace = []
         if len(repetition[feature_name]) > 0 and trace_index:
-            trace = repetition[feature_name][trace_index]
+            try:
+                trace = repetition[feature_name][trace_index]
+            except:
+                trace = []
 
         if trace:
             if isinstance(trace, list):
-                value = repetition[feature_name][trace_index][ap_index]
+                if feature_name != 'ISI_values':
+                    value = repetition[feature_name][trace_index][ap_index]
+                else:
+                    value = repetition[feature_name][trace_index][0]
             else:
-                value = repetition[feature_name][trace_index]
+                if ap_index == 0:
+                    value = repetition[feature_name][trace_index]
+                else:
+                    value = None
             feature_values.append(value)
 
     return feature_values
@@ -66,8 +75,37 @@ def add_feature_value_to_data(value, feature_name, updated_row, ap_index=np.nan,
     return updated_row
 
 
+def prepare_outliers(cells_to_be_removed):
+    # Initialize an empty dictionary
+    outliers = pd.DataFrame()
+
+    # Parse the cells to remove
+    if cells_to_be_removed:
+        with open(cells_to_be_removed, 'r') as txtfile:
+            # Read lines from the file
+            lines = txtfile.readlines()
+
+            # Process each line as key-value pairs
+            for line in lines:
+                # Split the line into key-value pairs based on commas
+                pairs = line.strip().split(', ')
+
+                # Extract key-value pairs and create a dictionary
+                data_dict = {}
+                for pair in pairs:
+                    key, value = pair.split(' ')
+                    data_dict[key] = value
+
+                # Append the dictionary as a new row to the DataFrame
+                outliers = pd.concat([outliers, pd.DataFrame([data_dict])], ignore_index=True)
+    else:
+        outliers = pd.DataFrame()
+
+    return outliers
+
+
 def data_preprocessing(path: str, all_cells: dict, feature_names: list, threshold_detector: str,
-                       protocol_to_plot: str, rm_in_cells=False):
+                       protocol_to_plot: str, cells_to_be_removed=None, repetition_index='all', rm_in_cells=False):
     count_df = load_data(path)
     cell_ids_to_keep = count_df['CellID'].tolist()
 
@@ -88,6 +126,9 @@ def data_preprocessing(path: str, all_cells: dict, feature_names: list, threshol
     # Create a list to store the data for plotting
     data_to_plot = pd.DataFrame()
 
+    # Initialize an empty dictionary
+    outliers = prepare_outliers(cells_to_be_removed=cells_to_be_removed)
+
     # Iterate over the cell names in all_cells
     for cell_name, cell_data in all_cells.items():
         protocol_index = [protocol for protocol in cell_data['protocol'] if protocol['name'] == protocol_to_plot]
@@ -107,11 +148,13 @@ def data_preprocessing(path: str, all_cells: dict, feature_names: list, threshol
             for feature_name in feature_names:
                 new_row[feature_name] = np.nan
 
-            if isinstance(protocol['repetition'], list):
+            if isinstance(protocol['repetition'], list) and repetition_index == 'all':
                 repetition_list = protocol['repetition']
                 repetition_iterator = enumerate(repetition_list)
-            else:  # if isinstance(protocol['repetition'], dict)
-                repetition_iterator = [(1, protocol['repetition'])]
+            else:
+                repetition = protocol['repetition'] if isinstance(protocol['repetition'], dict) \
+                    else protocol['repetition'][repetition_index]
+                repetition_iterator = [(0, repetition)]
 
             for n_trace, repetition in repetition_iterator:
                 trace_indices = get_trace_indices(protocol_to_plot=protocol_to_plot,
@@ -127,7 +170,11 @@ def data_preprocessing(path: str, all_cells: dict, feature_names: list, threshol
                                                               feature_name=feature_name,
                                                               trace_index=trace_index,
                                                               ap_index=ap_index)
-                            if condition_ap_index(value):
+                            check_outlier_row = pd.Series({'protocol': protocol_to_plot, 'cell': cell_name[5:],
+                                                           'repetition': str(n_trace), 'sweep': str(trace_index)})
+
+                            if (condition_ap_index(value) and
+                                    not any(outliers.apply(lambda row: row.equals(check_outlier_row), axis=1))):
                                 updated_row = add_feature_value_to_data(value=value,
                                                                         feature_name=feature_name,
                                                                         updated_row=updated_row,
@@ -184,13 +231,15 @@ def group_median(df: DataFrame, feature_name: str):
 if __name__ == "__main__":
     all_cells = get_all_cells('/home/lucas/BBP/Data/jsonData')
     path = os.path.join(os.getcwd(), 'CellList30-May-2022.csv')
+    outliers_to_be_removed = '/home/lucas/BBP/Code/outliers.txt'
 
     threshold_detector = 'spikecount'
 
     # ['FirePattern', 'IDRest', 'HyperDePol', 'IV', 'PosCheops', 'APWaveform', 'DeHyperPol', 'sAHP']
-    protocol = 'FirePattern'
+    protocol = 'APWaveform'
     feature_names = get_features(protocol)  # firing_rate
 
     data = data_preprocessing(path=path, all_cells=all_cells, feature_names=feature_names,
-                              threshold_detector=threshold_detector, protocol_to_plot=protocol)
+                              threshold_detector=threshold_detector, protocol_to_plot=protocol,
+                              cells_to_be_removed=outliers_to_be_removed)
     pass

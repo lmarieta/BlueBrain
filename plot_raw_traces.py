@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from read_mat_rcell import get_all_rcell_names, read_mat_rcell
-import matplotlib.pyplot as plt
+from preprocessing import prepare_outliers
 from read_cell import get_all_cells
 import re
 import time
@@ -15,7 +15,8 @@ import platform
 
 
 def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path: str, protocol: str,
-                    threshold_key='spikecount', plot_type='plot_all_traces', repetition_index=[]):
+                    threshold_key='spikecount', plot_type='plot_all_traces', repetition_index=[],
+                    cells_to_be_removed=None, ap_index=0):
     df = pd.DataFrame(columns=['cell_names', 'BrainArea', 'CellTypeGroup', 'Species', 'repetition',
                                'sweep', 'Threshold stimulus'])
     df['cell_names'] = get_all_rcell_names(rcell_path)
@@ -48,6 +49,8 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
     species = df['Species'].dropna().unique()
     df = get_stimuli(acells=acells, df=df, threshold_key=threshold_key, protocol=protocol)
     df = df.dropna(subset=['repetition'])
+
+    outliers = prepare_outliers(cells_to_be_removed=cells_to_be_removed)
 
     # Create color maps based on stimulus
     stim_values = np.unique(df['Threshold stimulus'])
@@ -107,8 +110,7 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                         except KeyError:
                             continue
 
-                        acell_data = [element for element in acell['protocol']
-                                      if element.get('name') == protocol][0]
+                        acell_data = [element for element in acell['protocol'] if element.get('name') == protocol][0]
                         repetitions = rcell[protocol]
                         if repetition_index:
                             keys = ['repetition: ' + str(idx) for idx in repetition_index]
@@ -117,12 +119,17 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                             match = re.search(r'repetition: (\d+)', rep_idx)
                             rep_idx = int(match.group(1))
                             sweep_idx = df.loc[(df['cell_names'] == cell_name) & (df['repetition'] == rep_idx), 'sweep']
+                            check_outlier_row = pd.Series({'protocol': protocol, 'cell': cell_name[5:],
+                                                           'repetition': str(rep_idx), 'sweep': str(sweep_idx)})
+                            if any(outliers.apply(lambda row: row.equals(check_outlier_row), axis=1)):
+                                # go to next cell if it is found in the outliers list
+                                continue
                             if not sweep_idx.empty:
                                 sweep_idx = int(sweep_idx.iloc[0])
                                 sweep = repetition['sweep: ' + str(sweep_idx)]
                                 try:
-                                    start_time = get_start_stimulus_time(acell=acell_data, repetition=rep_idx,
-                                                                         sweep=sweep_idx)
+                                    start_time = get_ap_start_time(acell=acell_data, repetition=rep_idx,
+                                                                   sweep=sweep_idx, ap_index=ap_index)
                                 except Exception as e:
                                     # Log the information to a text file
                                     error_message = (f"Error for Protocol: {protocol}, Cell: {cell_name}, "
@@ -139,8 +146,8 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                                     continue
                                 # Find the index of the closest time in x
                                 start_idx = np.argmin(np.abs(np.array(sweep['t']) - start_time))
-                                end_idx = get_second_ap_indice(acell=acell_data, repetition=rep_idx,
-                                                               sweep=sweep_idx)
+                                end_idx = get_next_ap_index(acell=acell_data, repetition=rep_idx,
+                                                            sweep=sweep_idx, ap_index=ap_index)
 
                                 x = sweep['t'][start_idx:end_idx] - sweep['t'][start_idx]
                                 y = sweep['data'][start_idx:end_idx]
@@ -157,7 +164,6 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                                 if plot_type == 'plot_mean':
                                     # Append each individual trace to the list
                                     all_traces.append(y)
-
 
                                 unique_label = (f'{cell_name}, repetition {rep_idx}, sweep {sweep_idx}, stim '
                                                 f'{stim.values[0]:.0f}pA')
@@ -239,24 +245,24 @@ def plot_raw_traces(rcell_path: str, acells_path: str, db_path: str, output_path
                     fig.write_html(figure_path)
 
 
-def get_start_stimulus_time(acell, repetition, sweep):
+def get_ap_start_time(acell, repetition, sweep, ap_index):
     # time in ms
     if isinstance(acell['repetition'], dict):
-        time = acell['repetition']['AP_begin_time'][0]
+        time = acell['repetition']['AP_begin_time'][ap_index]
     elif isinstance(acell['repetition'][repetition]['AP_begin_time'][sweep], list):
-        time = acell['repetition'][repetition]['AP_begin_time'][sweep][0]
+        time = acell['repetition'][repetition]['AP_begin_time'][sweep][ap_index]
     else:
         time = acell['repetition'][repetition]['AP_begin_time'][sweep]
     return time / 1000
 
 
-def get_second_ap_indice(acell, repetition, sweep):
+def get_next_ap_index(acell, repetition, sweep, ap_index):
     if isinstance(acell['repetition'], dict):
         indices = acell['repetition']['peak_indices'][sweep]
     else:
         indices = acell['repetition'][repetition]['peak_indices'][sweep]
     if isinstance(indices, list) and len(indices) >= 2:
-        idx = min([indices[1], indices[0] + 200])  # empirical value
+        idx = min([indices[ap_index + 1], indices[ap_index] + 200])  # empirical value
     elif isinstance(indices, int):
         idx = indices + 200
     else:
@@ -332,14 +338,16 @@ def get_paths(current_os: str, plot_type: str):
         rcell_path = 'C:\\Projects\\ASSProject\\Data\\matData'
         acells_path = 'C:\\Projects\\ASSProject\\Analysis\\Data\\jsonData'
         db_path = 'C:\\Projects\\ASSProject\\Analysis\\CellList30-May-2022.csv'
+        outliers_path = 'C:\\Projects\\ASSProject\\Analysis\\outliers.txt'
         if plot_type != 'plot_single_groups':
             output_path = 'C:\\Projects\\ASSProject\\Analysis\\Images\\raw_traces_first_AP_comparisons'
         else:
             output_path = 'C:\\Projects\\ASSProject\\Analysis\\Images\\raw_traces_first_AP'
     else:
+        outliers_path = '/home/lucas/BBP/Code/outliers.txt'
         raise ValueError('to be implemented')
 
-    return rcell_path, acells_path, db_path, output_path
+    return rcell_path, acells_path, db_path, output_path, outliers_path
 
 
 if __name__ == "__main__":
@@ -347,14 +355,17 @@ if __name__ == "__main__":
     plot_type = 'plot_single_groups'  # ['plot_mean', 'plot_all_traces', 'plot_single_groups']
     # get operating system
     current_os = platform.system()
-    rcell_path, acells_path, db_path, output_path = get_paths(current_os, plot_type)
+    rcell_path, acells_path, db_path, output_path, outliers_path = get_paths(current_os, plot_type)
 
     # Change here if you want to plot a specific repetition, index starts at 0.
     repetition_index = [0]
 
+    # Change here for which action potential you want to plot, starts at 0.
+    ap_index = 0
+
     start_time = time.time()
     plot_raw_traces(rcell_path=rcell_path, acells_path=acells_path, db_path=db_path, output_path=output_path,
-                    protocol=protocol, plot_type=plot_type, repetition_index=repetition_index)
+                    protocol=protocol, plot_type=plot_type, repetition_index=repetition_index, ap_index=ap_index)
     # Record the end time
     end_time = time.time()
 

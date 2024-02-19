@@ -10,7 +10,7 @@ def get_ap_index(protocol_name: str):
         case 'IV':
             ap_index = [0]
         case 'IDRest':
-            ap_index = [0]
+            ap_index = [0, 1]
         case 'HyperDePol':
             ap_index = [0]
         case 'DeHyperPol':

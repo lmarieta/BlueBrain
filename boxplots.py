@@ -11,8 +11,9 @@ if __name__ == "__main__":
     path = os.path.join(os.getcwd(), 'CellList30-May-2022.csv')
 
     threshold_detector = 'spikecount'
-    protocol = 'sAHP'
+    protocol = 'APWaveform'
     feature_names = get_features(protocol)
+    feature_names = [feature_name for feature_name in feature_names if feature_name != 'stim']
     data_to_plot = data_preprocessing(path=path, all_cells=all_cells, feature_names=feature_names,
                                       threshold_detector=threshold_detector, protocol_to_plot=protocol)
 
@@ -23,15 +24,16 @@ if __name__ == "__main__":
         if feature_name in data:
             # Create a box plot with seaborn
             # Create a box plot
-            trace = go.Box(x=data[data['protocol'] == protocol]['Group'],
-                           y=data[data['protocol'] == protocol][feature_name],
-                           name='Box Plot',
-                           jitter=0.3,
-                           hoverinfo='text',
-                           boxpoints='all',
-                           pointpos=0,
-                           text=data[data['protocol'] == protocol]['CellName'])
-            data = [trace]
+            box_trace = go.Box(x=data[data['protocol'] == protocol]['Group'],
+                               y=data[data['protocol'] == protocol][feature_name],
+                               name='Box Plot',
+                               jitter=0.3,
+                               hoverinfo='text',
+                               boxpoints='all',
+                               pointpos=0,
+                               text=data[data['protocol'] == protocol]['CellName'])
+
+            data = [box_trace]
 
             layout = go.Layout(title=(f'Protocol : {protocol}, feature : {feature_name}'
                                       f', grouped by Species, Brain Area and Cell Type'),

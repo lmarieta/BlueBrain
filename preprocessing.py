@@ -240,6 +240,6 @@ if __name__ == "__main__":
     feature_names = get_features(protocol)  # firing_rate
 
     data = data_preprocessing(path=path, all_cells=all_cells, feature_names=feature_names,
-                              threshold_detector=threshold_detector, protocol_to_plot=protocol,
+                              threshold_detector=threshold_detector, protocol_to_plot=protocol, rm_in_cells=True,
                               cells_to_be_removed=outliers_to_be_removed)
     pass

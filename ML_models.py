@@ -273,8 +273,8 @@ def data_preparation(data, path_to_json, all_cells, protocols, path_to_csv,
     test_data = data[data['CellName'].isin(cells_test)]
 
     # Uncomment to split test data as APWaveform data and the rest as IDRest
-    # train_val_data = data.loc[data['protocol'] == 'IDRest']
-    # test_data = data.loc[data['protocol'] == 'APWaveform']
+    train_val_data = data.loc[data['protocol'] == 'IDRest']
+    test_data = data.loc[data['protocol'] == 'APWaveform']
 
     # Create train and test sets
     X_train_val = train_val_data[feature_names]
@@ -450,7 +450,8 @@ def model_fitting(X_train_val, X_test, y_train_val, best_model, model_type, num_
 
     # Convert labels to number to make it readable to the model
     if model_type == 'custom_nn':
-        y_train_val = label_encoder.transform(y_train_val)
+        label_encoder = LabelEncoder()
+        y_train_val = label_encoder.fit_transform(y_train_val)
         y_train_val = to_categorical(y_train_val, num_classes=num_classes)
         # Train best model on train+val data
         early_stopping = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True)
@@ -504,8 +505,8 @@ if __name__ == "__main__":
     # You can remove features with the line below, stim is never used for prediction
     feature_names = [item for item in feature_names if item != 'stim']
     feature_names = [item for item in feature_names if item != 'ISI_values']
-    # feature_names = [item for item in feature_names if item != 'IV_peak_m']
-    # feature_names = [item for item in feature_names if item != 'IV_steady_m']
+    feature_names = [item for item in feature_names if item != 'IV_peak_m']
+    feature_names = [item for item in feature_names if item != 'IV_steady_m']
 
     (X_train_val, y_train_val, train_val_data,
      X_test, y_test, test_data) = data_preparation(data=data,

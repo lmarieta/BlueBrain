@@ -199,7 +199,7 @@ def plot_contours(ax, clf, xx, yy, **params):
     return out
 
 
-def data_preparation(data, path_to_json, all_cells, protocols, path_to_csv,
+def data_preparation(data, path_to_json, all_cells, protocols, path_to_csv, cell_model=False,
                      read_json_files=False, threshold_detector='spikecount'):
     if read_json_files:
         for protocol in protocols:
@@ -273,8 +273,9 @@ def data_preparation(data, path_to_json, all_cells, protocols, path_to_csv,
     test_data = data[data['CellName'].isin(cells_test)]
 
     # Uncomment to split test data as APWaveform data and the rest as IDRest
-    train_val_data = data.loc[data['protocol'] == 'IDRest']
-    test_data = data.loc[data['protocol'] == 'APWaveform']
+    if not cell_model:
+        train_val_data = data.loc[data['protocol'] == 'IDRest']
+        test_data = data.loc[data['protocol'] == 'APWaveform']
 
     # Create train and test sets
     X_train_val = train_val_data[feature_names]
@@ -489,11 +490,11 @@ if __name__ == "__main__":
     parameter_scan = True  # Perform grid or random search for different model hyperparameters
     interaction_terms = True  # Only for logistic regression, i.e. include second order terms x1x2
     # instead of only x1 and x2
-    model_type = 'random_forest'  # pick from ['xgb', 'neural_network', 'SVM', 'logistic_regression',
+    model_type = 'custom_nn'  # pick from ['xgb', 'neural_network', 'SVM', 'logistic_regression',
     # 'random_forest', 'knn', 'custom_nn']
     oversampling = True  # Use SMOTE to generate syntethic samples
     random_state = 42  # random seed to always obtain the same result
-    cell_model = False  # Set to True if you want a cell model instead of a first AP model
+    cell_model = True  # Set to True if you want a cell model instead of a first AP model
     epochs = 200  # number of epochs to train the custom neural network, hyperparameter tuning is made on int(epochs/4)
 
     all_cells = get_all_cells(path_to_json_files)
@@ -505,8 +506,8 @@ if __name__ == "__main__":
     # You can remove features with the line below, stim is never used for prediction
     feature_names = [item for item in feature_names if item != 'stim']
     feature_names = [item for item in feature_names if item != 'ISI_values']
-    feature_names = [item for item in feature_names if item != 'IV_peak_m']
-    feature_names = [item for item in feature_names if item != 'IV_steady_m']
+    #feature_names = [item for item in feature_names if item != 'IV_peak_m']
+    #feature_names = [item for item in feature_names if item != 'IV_steady_m']
 
     (X_train_val, y_train_val, train_val_data,
      X_test, y_test, test_data) = data_preparation(data=data,
@@ -514,6 +515,7 @@ if __name__ == "__main__":
                                                    all_cells=all_cells,
                                                    protocols=protocols,
                                                    path_to_csv=path_to_csv,
+                                                   cell_model=cell_model,
                                                    read_json_files=read_json_files,
                                                    threshold_detector=threshold_detector)
 

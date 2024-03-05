@@ -174,7 +174,7 @@ def convert_to_cell_model(data):
     # Filter DataFrame to include 'CellName', 'Group', and numeric columns
     selected_columns = ['CellName', 'Group'] + list(numeric_columns)
     numeric_df = data[selected_columns]
-    result = numeric_df.groupby(['CellName', 'Group']).mean().reset_index()
+    result = numeric_df.groupby(['CellName', 'Group']).median().reset_index()
     return result
 
 
@@ -261,7 +261,7 @@ def data_preparation(data, path_to_json, all_cells, protocols, path_to_csv, cell
     split_train_val = []
     for group in unique_groups:
         split_names = data['Split column'].loc[data['Group'] == group].unique()
-        train_split, test_split = train_test_split(split_names, test_size=0.3, random_state=random_state)
+        train_split, test_split = train_test_split(split_names, test_size=0.2, random_state=random_state)
         train_name = [split.split(' ')[0] for split in train_split]
         test_name = [split.split(' ')[0] for split in test_split]
         cells_train_val.extend(train_name)
@@ -494,7 +494,7 @@ if __name__ == "__main__":
     # 'random_forest', 'knn', 'custom_nn']
     oversampling = True  # Use SMOTE to generate syntethic samples
     random_state = 42  # random seed to always obtain the same result
-    cell_model = True  # Set to True if you want a cell model instead of a first AP model
+    cell_model = False  # Set to True if you want a cell model instead of a first AP model
     epochs = 200  # number of epochs to train the custom neural network, hyperparameter tuning is made on int(epochs/4)
 
     all_cells = get_all_cells(path_to_json_files)
@@ -509,6 +509,7 @@ if __name__ == "__main__":
     #feature_names = [item for item in feature_names if item != 'IV_peak_m']
     #feature_names = [item for item in feature_names if item != 'IV_steady_m']
 
+    # Split the data and put it in the correct table format for model training
     (X_train_val, y_train_val, train_val_data,
      X_test, y_test, test_data) = data_preparation(data=data,
                                                    path_to_json=path,
@@ -519,6 +520,7 @@ if __name__ == "__main__":
                                                    read_json_files=read_json_files,
                                                    threshold_detector=threshold_detector)
 
+    # Classes are species, brain area, cell type such as Mouse Amygdala PC
     short_labels = [label.split(' AP')[0] for label in y_train_val]
     class_labels = np.unique(short_labels)
     num_classes = len(class_labels)

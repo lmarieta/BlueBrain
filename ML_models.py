@@ -444,6 +444,13 @@ def model_fitting(X_train_val, X_test, y_train_val, best_model, model_type, num_
                                               oversampler='SMOTE')
     if model_type != 'logistic_regression':
         X_train_val, X_test = scaling(X_train_val, X_test)
+    else:
+        if interaction_terms:
+            # Use PolynomialFeatures to create interaction terms
+            degree = 3  # You can adjust the degree as needed
+            poly = PolynomialFeatures(degree, interaction_only=True, include_bias=False)
+            X_train_val = poly.fit_transform(X_train_val)
+            X_test = poly.transform(X_test)
 
     if model_type == 'xgb':
         label_encoder = LabelEncoder()
@@ -494,7 +501,7 @@ if __name__ == "__main__":
     # 'random_forest', 'knn', 'custom_nn']
     oversampling = True  # Use SMOTE to generate syntethic samples
     random_state = 42  # random seed to always obtain the same result
-    cell_model = False  # Set to True if you want a cell model instead of a first AP model
+    cell_model = True  # Set to True if you want a cell model instead of a first AP model
     epochs = 200  # number of epochs to train the custom neural network, hyperparameter tuning is made on int(epochs/4)
 
     all_cells = get_all_cells(path_to_json_files)
@@ -506,8 +513,8 @@ if __name__ == "__main__":
     # You can remove features with the line below, stim is never used for prediction
     feature_names = [item for item in feature_names if item != 'stim']
     feature_names = [item for item in feature_names if item != 'ISI_values']
-    #feature_names = [item for item in feature_names if item != 'IV_peak_m']
-    #feature_names = [item for item in feature_names if item != 'IV_steady_m']
+    # feature_names = [item for item in feature_names if item != 'IV_peak_m']
+    # feature_names = [item for item in feature_names if item != 'IV_steady_m']
 
     # Split the data and put it in the correct table format for model training
     (X_train_val, y_train_val, train_val_data,
@@ -537,3 +544,4 @@ if __name__ == "__main__":
     # Compute, display and save results
     plot_results(y_test=y_test, y_pred_test=y_pred_test, output_figure_path=output_figure_path,
                  class_labels=class_labels)
+    pass

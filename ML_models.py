@@ -22,12 +22,13 @@ from sklearn.neighbors import KNeighborsClassifier
 from imblearn.over_sampling import SMOTE
 import smote_variants as sv
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from keras.utils import to_categorical
 from xgboost import XGBClassifier
 from keras.callbacks import EarlyStopping
 from sklearn.model_selection import StratifiedKFold
 from scikeras.wrappers import KerasClassifier
+from tensorflow.keras.regularizers import l2
 
 
 def get_distinct_colors(num_colors):
@@ -46,15 +47,17 @@ def get_model(model_type, input_shape=(0,), random_state=42, num_classes=7, drop
         case 'xgb':
             model = XGBClassifier()
         case 'custom_nn':
+            n_units = 256
             # Define the neural network model
             model = Sequential()
 
             # Add an input layer with the appropriate input shape
-            model.add(Dense(units=64, activation='relu', input_shape=input_shape))
+            model.add(Dense(units=n_units, activation='relu', kernel_regularizer=l2(0.001), input_shape=input_shape))
+            model.add(Dropout(dropout_rate))
 
             # Add one or more hidden layers
             for i in range(num_hidden_layers):
-                model.add(Dense(units=64, activation='relu'))
+                model.add(Dense(units=n_units//(2*(i+1)), kernel_regularizer=l2(0.001), activation='relu'))
                 model.add(Dropout(dropout_rate))
 
             # Add the output layer with the appropriate number of units (equal to the number of classes) and softmax activation
@@ -102,7 +105,7 @@ def param_search_space(model_type):
         case 'custom_nn':
             param_dist = {
                 "optimizer__learning_rate": [0.0001, 0.001, 0.1],
-                "dropout_rate": [0, 0.1, 0.5],
+                "dropout_rate": [0, 0.1, 0.3],
                 "num_hidden_layers": [1, 2, 3, 5]
             }
         case 'knn':
@@ -272,11 +275,6 @@ def data_preparation(data, path_to_json, all_cells, protocols, path_to_csv, cell
     train_val_data = data[data['CellName'].isin(cells_train_val)]
     test_data = data[data['CellName'].isin(cells_test)]
 
-    # Uncomment to split test data as APWaveform data and the rest as IDRest
-    if not cell_model:
-        train_val_data = data.loc[data['protocol'] == 'IDRest']
-        test_data = data.loc[data['protocol'] == 'APWaveform']
-
     # Create train and test sets
     X_train_val = train_val_data[feature_names]
     X_test = test_data[feature_names]
@@ -285,51 +283,11 @@ def data_preparation(data, path_to_json, all_cells, protocols, path_to_csv, cell
 
     return X_train_val, y_train_val, train_val_data, X_test, y_test, test_data
 
-def plot_results(y_test, y_pred_test, output_figure_path, class_labels):
-    # Confusion matrix and classification report
-    confusion = confusion_matrix(y_test, y_pred_test)
-    print("Test confusion matrix:\n", confusion)
 
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(confusion, annot=True, fmt='d', cmap='Blues', cbar=False, annot_kws={"size": 8})
-    plt.xlabel('Predicted')
-    plt.ylabel('True')
-    plt.title('Confusion Matrix, ' + model_type)
-    plt.xticks(np.arange(len(class_labels)) + 0.5, class_labels, rotation=90)
-    plt.yticks(np.arange(len(class_labels)) + 0.5, class_labels, rotation=0)
-    plt.tight_layout()
-    plt.savefig(output_figure_path + 'confusion_matrix.png')
-    plt.show()
-
-    # Calculate validation metrics, take weighted average since we are considering multi classes
-    f1_test = f1_score(y_test, y_pred_test, average='weighted')
-    recall_test = recall_score(y_test, y_pred_test, average='weighted')
-    precision_test = precision_score(y_test, y_pred_test, average='weighted')
-
-    # Display metrics
-    print("F1 (weighted) on test set:", f1_test)
-    print("Recall (weighted) on test set:", recall_test)
-    print("Precision (weighted) on test set:", precision_test)
-
-    # Confusion matrix and classification report
-    report = classification_report(y_test, y_pred_test, target_names=np.unique(y_test).astype(str))
-    print("Test classification Report:\n", report)
-
-    # Convert the classification report to a DataFrame
-    report_df = pd.read_fwf(StringIO(report), index_col=0)
-
-    # Convert the DataFrame to an HTML table
-    html_table = report_df.to_html(classes='table table-striped')
-
-    # Save the HTML table to a file
-    with open(output_figure_path + 'classification_report.html', 'w') as file:
-        file.write(html_table)
-
-
-def hyperparameter_tuning(X_train_val, train_val_data, feature_names, model_type, cell_model, num_classes,
+def hyperparameter_tuning(X_train_val, train_val_data, feature_names, model_type, cell_model, num_classes, epochs=100,
                           oversampling=True, random_state=42):
     # Define the number of folds for cross-validation
-    n_splits = 5
+    n_splits = 2
 
     # Initialize the StratifiedKFold object
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
@@ -385,7 +343,7 @@ def hyperparameter_tuning(X_train_val, train_val_data, feature_names, model_type
             case 'knn':
                 model = get_model(model_type, random_state=random_state)
             case 'custom_nn':
-                model = KerasClassifier(build_fn=get_model, model_type=model_type, input_shape=(X_train.shape[1],),
+                model = KerasClassifier(model=get_model, model_type=model_type, input_shape=(X_train.shape[1],),
                                         num_classes=num_classes, random_state=random_state, dropout_rate=0,
                                         num_hidden_layers=1)
                 # Convert labels to number to make it readable to the model
@@ -403,15 +361,15 @@ def hyperparameter_tuning(X_train_val, train_val_data, feature_names, model_type
                                    param_distributions=param_dist,
                                    n_iter=10,  # Number of random combinations to try
                                    scoring='f1_weighted',  # Use an appropriate scoring metric
-                                   cv=5,  # Number of cross-validation folds
+                                   cv=None,  # Number of cross-validation folds
                                    verbose=0,
                                    n_jobs=-1,  # Use all available cores
                                    random_state=random_state,
                                    )
         # Fit the model to training data
         if model_type == 'custom_nn':
-            early_stopping = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True)
-            clf = model.fit(X_train, y_train, epochs=int(epochs/4), callbacks=[early_stopping])
+            early_stopping = EarlyStopping(monitor='val_loss', min_delta=0.01, patience=5, restore_best_weights=True)
+            clf = model.fit(X_train, y_train, epochs=int(epochs/6), callbacks=[early_stopping])
         else:
             clf = model.fit(X_train, y_train)
         # Make predictions on the validation set
@@ -437,7 +395,7 @@ def hyperparameter_tuning(X_train_val, train_val_data, feature_names, model_type
     return best_model
 
 
-def model_fitting(X_train_val, X_test, y_train_val, best_model, model_type, num_classes, oversampling=True):
+def model_fitting(X_train_val, X_test, y_train_val, best_model, model_type, num_classes, epochs=100, oversampling=True):
     # Oversample data because of imbalanced dataset, each class gets the same number of cells, only apply to training
     if oversampling:
         X_train_val, y_train_val = oversample(X=X_train_val, y=y_train_val,
@@ -462,7 +420,7 @@ def model_fitting(X_train_val, X_test, y_train_val, best_model, model_type, num_
         y_train_val = label_encoder.fit_transform(y_train_val)
         y_train_val = to_categorical(y_train_val, num_classes=num_classes)
         # Train best model on train+val data
-        early_stopping = EarlyStopping(monitor='loss', patience=10, restore_best_weights=True)
+        early_stopping = EarlyStopping(monitor='loss', min_delta=0.02, patience=5, restore_best_weights=True)
         best_model = best_model.fit(X_train_val, y_train_val, epochs=epochs, callbacks=[early_stopping])
     else:
         best_model = best_model.fit(X_train_val, y_train_val)
@@ -478,6 +436,46 @@ def model_fitting(X_train_val, X_test, y_train_val, best_model, model_type, num_
         y_pred_test = label_encoder.inverse_transform(y_pred_test)
 
     return y_pred_test
+
+def plot_results(y_test, y_pred_test, output_figure_path, class_labels):
+    # Confusion matrix and classification report
+    confusion = confusion_matrix(y_test, y_pred_test)
+    print("Test confusion matrix:\n", confusion)
+
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(confusion, annot=True, fmt='d', cmap='Blues', cbar=False, annot_kws={"size": 8})
+    plt.xlabel('Predicted')
+    plt.ylabel('True')
+    plt.title('Confusion Matrix, ' + model_type)
+    plt.xticks(np.arange(len(class_labels)) + 0.5, class_labels, rotation=90)
+    plt.yticks(np.arange(len(class_labels)) + 0.5, class_labels, rotation=0)
+    plt.tight_layout()
+    plt.savefig(output_figure_path + 'confusion_matrix.png')
+    plt.show()
+
+    # Calculate validation metrics, take weighted average since we are considering multi classes
+    f1_test = f1_score(y_test, y_pred_test, average='weighted')
+    recall_test = recall_score(y_test, y_pred_test, average='weighted')
+    precision_test = precision_score(y_test, y_pred_test, average='weighted')
+
+    # Display metrics
+    print("F1 (weighted) on test set:", f1_test)
+    print("Recall (weighted) on test set:", recall_test)
+    print("Precision (weighted) on test set:", precision_test)
+
+    # Confusion matrix and classification report
+    report = classification_report(y_test, y_pred_test, target_names=np.unique(y_test).astype(str))
+    print("Test classification Report:\n", report)
+
+    # Convert the classification report to a DataFrame
+    report_df = pd.read_fwf(StringIO(report), index_col=0)
+
+    # Convert the DataFrame to an HTML table
+    html_table = report_df.to_html(classes='table table-striped')
+
+    # Save the HTML table to a file
+    with open(output_figure_path + 'classification_report.html', 'w') as file:
+        file.write(html_table)
 
 
 if __name__ == "__main__":
@@ -501,7 +499,7 @@ if __name__ == "__main__":
     # 'random_forest', 'knn', 'custom_nn']
     oversampling = True  # Use SMOTE to generate syntethic samples
     random_state = 42  # random seed to always obtain the same result
-    cell_model = True  # Set to True if you want a cell model instead of a first AP model
+    cell_model = False  # Set to True if you want a cell model instead of a first AP model
     epochs = 200  # number of epochs to train the custom neural network, hyperparameter tuning is made on int(epochs/4)
 
     all_cells = get_all_cells(path_to_json_files)
@@ -535,11 +533,12 @@ if __name__ == "__main__":
     # Hyperparameter tuning
     best_model = hyperparameter_tuning(X_train_val=X_train_val, train_val_data=train_val_data,
                                        feature_names=feature_names, model_type=model_type, cell_model=cell_model,
-                                       num_classes=num_classes, oversampling=oversampling, random_state=random_state)
+                                       num_classes=num_classes, epochs=epochs, oversampling=oversampling,
+                                       random_state=random_state)
 
     # Create prediction
     y_pred_test = model_fitting(X_train_val=X_train_val, X_test=X_test, y_train_val=y_train_val, best_model=best_model,
-                                model_type=model_type, num_classes=num_classes, oversampling=oversampling)
+                                model_type=model_type, num_classes=num_classes, epochs=epochs, oversampling=oversampling)
 
     # Compute, display and save results
     plot_results(y_test=y_test, y_pred_test=y_pred_test, output_figure_path=output_figure_path,

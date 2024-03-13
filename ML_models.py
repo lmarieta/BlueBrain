@@ -6,7 +6,7 @@ import os.path
 from preprocessing import data_preprocessing
 from sklearn.metrics import (f1_score, recall_score, precision_score, classification_report,
                              confusion_matrix)
-from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
+from sklearn.model_selection import RandomizedSearchCV
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.preprocessing import LabelEncoder
@@ -22,11 +22,10 @@ from sklearn.neighbors import KNeighborsClassifier
 from imblearn.over_sampling import SMOTE
 import smote_variants as sv
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Activation
 from keras.utils import to_categorical
 from xgboost import XGBClassifier
 from keras.callbacks import EarlyStopping
-from sklearn.model_selection import StratifiedKFold
 from scikeras.wrappers import KerasClassifier
 from tensorflow.keras.regularizers import l2
 
@@ -41,26 +40,32 @@ def get_distinct_colors(num_colors):
     return colors
 
 
-def get_model(model_type, input_shape=(0,), random_state=42, num_classes=7, dropout_rate=0, num_hidden_layers=1):
+def get_model(model_type, input_shape=(0,), random_state=42, num_classes=7, dropout_rate=0, l2_reg=0,
+              num_hidden_layers=1):
     model = None
     match model_type:
         case 'xgb':
             model = XGBClassifier()
         case 'custom_nn':
-            n_units = 256
+            n_units = 32
+
             # Define the neural network model
             model = Sequential()
 
             # Add an input layer with the appropriate input shape
-            model.add(Dense(units=n_units, activation='relu', kernel_regularizer=l2(0.001), input_shape=input_shape))
-            model.add(Dropout(dropout_rate))
+            model.add(Dense(units=n_units, kernel_regularizer=l2(l2_reg), input_shape=input_shape))
+            model.add(BatchNormalization())  # Add Batch Normalization before activation
+            model.add(Activation('relu'))
+            model.add(Dropout(dropout_rate, seed=random_state))
 
             # Add one or more hidden layers
             for i in range(num_hidden_layers):
-                model.add(Dense(units=n_units//(2*(i+1)), kernel_regularizer=l2(0.001), activation='relu'))
-                model.add(Dropout(dropout_rate))
+                model.add(Dense(units=n_units, kernel_regularizer=l2(l2_reg)))
+                model.add(BatchNormalization())  # Add Batch Normalization before activation
+                model.add(Activation('relu'))
+                model.add(Dropout(dropout_rate, seed=random_state))
 
-            # Add the output layer with the appropriate number of units (equal to the number of classes) and softmax activation
+            # Add the output layer (units equal to the number of classes) and softmax activation
             model.add(Dense(units=num_classes, activation='softmax'))
 
             # Compile the model
@@ -76,7 +81,7 @@ def get_model(model_type, input_shape=(0,), random_state=42, num_classes=7, drop
             model = LogisticRegression()
         case 'random_forest':
             # Initialize the hyperparameters
-            criterion = 'log_loss'  # log_loss because we are working with multi-class classification (as opposed to binary)
+            criterion = 'log_loss'  # log_loss because multi-class classification (as opposed to binary)
             max_depth = 10
             bootstrap = False  # Build trees with random sub-sample from dataset if True, otherwise use whole dataset
             class_weight = 'balanced'  # Trying balanced because of imbalanced dataset
@@ -95,18 +100,18 @@ def param_search_space(model_type):
             param_dist = {
                 'objective': ['multi:softmax'],
                 'num_class': [7],
-                'max_depth': [3, 5, 7],
-                'learning_rate': [0.01, 0.1, 0.2],
-                'n_estimators': [50, 100, 200],
-                'subsample': [0.8, 0.9, 1.0],
-                'colsample_bytree': [0.8, 0.9, 1.0],
+                'max_depth': [1, 3, 5],
+                'learning_rate': [0.01, 0.1, 0.3, 0.5],
+                'n_estimators': [100, 200, 500],
+                'reg_lambda': [0, 0.01, 0.1, 1, 10, 100],
                 'gamma': [0, 1, 5],
             }
         case 'custom_nn':
             param_dist = {
                 "optimizer__learning_rate": [0.0001, 0.001, 0.1],
-                "dropout_rate": [0, 0.1, 0.3],
-                "num_hidden_layers": [1, 2, 3, 5]
+                "dropout_rate": [0, 0.1, 0.3, 0.4],
+                "num_hidden_layers": [0, 1, 2, 3, 4],
+                "l2_reg": [0, 0.01, 0.1, 1, 10, 100]
             }
         case 'knn':
             param_dist = {
@@ -177,15 +182,17 @@ def convert_to_cell_model(data):
     # Filter DataFrame to include 'CellName', 'Group', and numeric columns
     selected_columns = ['CellName', 'Group'] + list(numeric_columns)
     numeric_df = data[selected_columns]
-    result = numeric_df.groupby(['CellName', 'Group']).median().reset_index()
+    result = numeric_df.groupby(['CellName', 'Group']).mean().reset_index()
     return result
 
 
-def scaling(X_train, X_test):
+def scaling(X_train, X_val, X_test=None):
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
-    return X_train, X_test
+    X_val = scaler.transform(X_val)
+    if X_test is not None:
+        X_test = scaler.transform(X_test)
+    return X_train, X_val, X_test
 
 
 def make_meshgrid(x, y, h=.02):
@@ -202,8 +209,8 @@ def plot_contours(ax, clf, xx, yy, **params):
     return out
 
 
-def data_preparation(data, path_to_json, all_cells, protocols, path_to_csv, cell_model=False,
-                     read_json_files=False, threshold_detector='spikecount'):
+def data_preparation(data, feature_names, path_to_json, all_cells, protocols, path_to_csv, cell_model=False,
+                     test_size=0.2, read_json_files=False, threshold_detector='spikecount'):
     if read_json_files:
         for protocol in protocols:
             data = pd.concat(
@@ -255,6 +262,14 @@ def data_preparation(data, path_to_json, all_cells, protocols, path_to_csv, cell
     # Reset the index to have a sorted dataframe
     data = data.reset_index(drop=True)
 
+    X_train_val, y_train_val, train_val_data, X_test, y_test, test_data = data_splitting(data, feature_names,
+                                                                                         test_size=test_size,
+                                                                                         random_state=random_state)
+
+    return X_train_val, y_train_val, train_val_data, X_test, y_test, test_data, data
+
+
+def data_splitting(data, feature_names, test_size, random_state=42):
     # Split training and test data on the cell names and the groups to keep approx the same ratio of cells in
     # train and test
     unique_groups = data['Group'].unique()
@@ -264,7 +279,7 @@ def data_preparation(data, path_to_json, all_cells, protocols, path_to_csv, cell
     split_train_val = []
     for group in unique_groups:
         split_names = data['Split column'].loc[data['Group'] == group].unique()
-        train_split, test_split = train_test_split(split_names, test_size=0.2, random_state=random_state)
+        train_split, test_split = train_test_split(split_names, test_size=test_size, random_state=random_state)
         train_name = [split.split(' ')[0] for split in train_split]
         test_name = [split.split(' ')[0] for split in test_split]
         cells_train_val.extend(train_name)
@@ -280,49 +295,37 @@ def data_preparation(data, path_to_json, all_cells, protocols, path_to_csv, cell
     X_test = test_data[feature_names]
     y_train_val = train_val_data['Group']
     y_test = test_data['Group']
-
     return X_train_val, y_train_val, train_val_data, X_test, y_test, test_data
 
 
-def hyperparameter_tuning(X_train_val, train_val_data, feature_names, model_type, cell_model, num_classes, epochs=100,
+def hyperparameter_tuning(train_val_data, feature_names, model_type, num_classes, test_size=0.2, epochs=100,
                           oversampling=True, random_state=42):
     # Define the number of folds for cross-validation
-    n_splits = 2
-
-    # Initialize the StratifiedKFold object
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    n_splits = 5
 
     # Initialize parameter search space
     param_dist = param_search_space(model_type)
 
     # Initialize lists to store results
     best_val_f1 = 0
-    # create a variable to split all classes with approx. the same percentage in train and validation sets
-    if cell_model:
-        split_column = 'Group'
-    else:
-        split_column = 'Split column'
 
     # Iterate over the folds
-    for train_index, val_index in skf.split(X_train_val, train_val_data[split_column]):
+    for i in range(n_splits):
         # Split the data into training and validation sets
-        train_data = train_val_data.iloc[train_index]
-        val_data = train_val_data.iloc[val_index]
+        X_train, y_train, train_data, X_val, y_val, val_data = data_splitting(train_val_data, feature_names,
+                                                                              test_size=test_size,
+                                                                              random_state=random_state + i)
 
-        # Create train and validation sets
-        X_train = train_data[feature_names]
-        X_val = val_data[feature_names]
-        y_train = train_data['Group']
-        y_val = val_data['Group']
-
-        # Oversample data because of imbalanced dataset, each class gets the same number of cells, only apply to training
+        # Oversample data because of imbalanced dataset, each class gets the same number of cells, only for training
+        # these oversamplers are also good ADASYN, MSYN, SMOTE_Cosine, SMOTE_D, NT_SMOTE
         if oversampling:
             X_train, y_train = oversample(X=X_train, y=y_train,
-                                          oversampler='SMOTE')  # these are also good ADASYN, MSYN, SMOTE_Cosine, SMOTE_D, NT_SMOTE
+                                          oversampler='SMOTE',
+                                          random_state=random_state)
 
         # Normalize the data
         if model_type != 'logistic_regression':
-            X_train, X_val = scaling(X_train, X_val)
+            X_train, X_val, _ = scaling(X_train, X_val)
 
         # Model creation
         match model_type:
@@ -345,12 +348,13 @@ def hyperparameter_tuning(X_train_val, train_val_data, feature_names, model_type
             case 'custom_nn':
                 model = KerasClassifier(model=get_model, model_type=model_type, input_shape=(X_train.shape[1],),
                                         num_classes=num_classes, random_state=random_state, dropout_rate=0,
-                                        num_hidden_layers=1)
+                                        l2_reg=0, num_hidden_layers=1)
                 # Convert labels to number to make it readable to the model
                 label_encoder = LabelEncoder()
                 y_train = label_encoder.fit_transform(y_train)
                 y_val = label_encoder.transform(y_val)
                 y_train = to_categorical(y_train, num_classes=num_classes)
+                y_val = to_categorical(y_val, num_classes=num_classes)
             case 'xgb':
                 model = get_model(model_type, random_state=random_state)
                 # Convert labels to number to make it readable to the model
@@ -359,17 +363,17 @@ def hyperparameter_tuning(X_train_val, train_val_data, feature_names, model_type
                 y_val = label_encoder.transform(y_val)
         model = RandomizedSearchCV(model,
                                    param_distributions=param_dist,
-                                   n_iter=10,  # Number of random combinations to try
+                                   n_iter=20,  # Number of random combinations to try
                                    scoring='f1_weighted',  # Use an appropriate scoring metric
                                    cv=None,  # Number of cross-validation folds
-                                   verbose=0,
                                    n_jobs=-1,  # Use all available cores
                                    random_state=random_state,
                                    )
         # Fit the model to training data
         if model_type == 'custom_nn':
-            early_stopping = EarlyStopping(monitor='val_loss', min_delta=0.01, patience=5, restore_best_weights=True)
-            clf = model.fit(X_train, y_train, epochs=int(epochs/6), callbacks=[early_stopping])
+            early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+            clf = model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=int(epochs / 4),
+                            callbacks=[early_stopping])
         else:
             clf = model.fit(X_train, y_train)
         # Make predictions on the validation set
@@ -378,8 +382,9 @@ def hyperparameter_tuning(X_train_val, train_val_data, feature_names, model_type
         # Convert encoded predictions to string label to make it readable to humans
         if model_type == 'custom_nn':
             y_pred_val_indices = np.argmax(y_pred_val, axis=1)
+            y_val_indices = np.argmax(y_val, axis=1)
             y_pred_val = label_encoder.inverse_transform(y_pred_val_indices)
-            y_val = label_encoder.inverse_transform(y_val)
+            y_val = label_encoder.inverse_transform(y_val_indices)
         elif model_type == 'xgb':
             y_pred_val = label_encoder.inverse_transform(y_pred_val)
             y_val = label_encoder.inverse_transform(y_val)
@@ -395,13 +400,14 @@ def hyperparameter_tuning(X_train_val, train_val_data, feature_names, model_type
     return best_model
 
 
-def model_fitting(X_train_val, X_test, y_train_val, best_model, model_type, num_classes, epochs=100, oversampling=True):
+def model_fitting(X_train_val, X_test, y_train_val, best_model, model_type, epochs=100,
+                  oversampling=True):
     # Oversample data because of imbalanced dataset, each class gets the same number of cells, only apply to training
     if oversampling:
         X_train_val, y_train_val = oversample(X=X_train_val, y=y_train_val,
-                                              oversampler='SMOTE')
+                                              oversampler='SMOTE', random_state=random_state)
     if model_type != 'logistic_regression':
-        X_train_val, X_test = scaling(X_train_val, X_test)
+        X_train_val, X_test, _ = scaling(X_train_val, X_test)
     else:
         if interaction_terms:
             # Use PolynomialFeatures to create interaction terms
@@ -418,10 +424,9 @@ def model_fitting(X_train_val, X_test, y_train_val, best_model, model_type, num_
     if model_type == 'custom_nn':
         label_encoder = LabelEncoder()
         y_train_val = label_encoder.fit_transform(y_train_val)
-        y_train_val = to_categorical(y_train_val, num_classes=num_classes)
+        y_train_val = to_categorical(y_train_val)
         # Train best model on train+val data
-        early_stopping = EarlyStopping(monitor='loss', min_delta=0.02, patience=5, restore_best_weights=True)
-        best_model = best_model.fit(X_train_val, y_train_val, epochs=epochs, callbacks=[early_stopping])
+        best_model = best_model.fit(X_train_val, y_train_val, epochs=epochs)
     else:
         best_model = best_model.fit(X_train_val, y_train_val)
 
@@ -436,6 +441,7 @@ def model_fitting(X_train_val, X_test, y_train_val, best_model, model_type, num_
         y_pred_test = label_encoder.inverse_transform(y_pred_test)
 
     return y_pred_test
+
 
 def plot_results(y_test, y_pred_test, output_figure_path, class_labels):
     # Confusion matrix and classification report
@@ -489,18 +495,26 @@ if __name__ == "__main__":
     # for example detect an AP if spikecount is > 0
     protocols = ['IV', 'IDRest', 'APWaveform']
     data = pd.DataFrame()
-    read_json_files = False  # Set to no to read data from a csv instead of all json files
+    read_json_files = False  # Set to not to read data from a csv instead of all json files
     # (much faster but needs to be saved first)
 
     parameter_scan = True  # Perform grid or random search for different model hyperparameters
     interaction_terms = True  # Only for logistic regression, i.e. include second order terms x1x2
     # instead of only x1 and x2
-    model_type = 'custom_nn'  # pick from ['xgb', 'neural_network', 'SVM', 'logistic_regression',
+    model_type = 'logistic_regression'  # pick from ['xgb', 'neural_network', 'SVM', 'logistic_regression',
     # 'random_forest', 'knn', 'custom_nn']
     oversampling = True  # Use SMOTE to generate syntethic samples
     random_state = 42  # random seed to always obtain the same result
-    cell_model = False  # Set to True if you want a cell model instead of a first AP model
-    epochs = 200  # number of epochs to train the custom neural network, hyperparameter tuning is made on int(epochs/4)
+    cell_model = True  # Set to True if you want a cell model instead of a first AP model
+    epochs = 50  # number of epochs to train the custom neural network, hyperparameter tuning is made on int(epochs/4)
+    if cell_model and model_type == 'logistic_regression':
+        test_size = 0.25
+    elif cell_model and model_type == 'SVM':
+        test_size = 0.2
+    elif not cell_model:
+        test_size = 0.05
+    else:
+        test_size = 0.2
 
     all_cells = get_all_cells(path_to_json_files)
     path = os.path.join(os.getcwd(), 'CellList30-May-2022.csv')
@@ -516,14 +530,16 @@ if __name__ == "__main__":
 
     # Split the data and put it in the correct table format for model training
     (X_train_val, y_train_val, train_val_data,
-     X_test, y_test, test_data) = data_preparation(data=data,
-                                                   path_to_json=path,
-                                                   all_cells=all_cells,
-                                                   protocols=protocols,
-                                                   path_to_csv=path_to_csv,
-                                                   cell_model=cell_model,
-                                                   read_json_files=read_json_files,
-                                                   threshold_detector=threshold_detector)
+     X_test, y_test, test_data, data) = data_preparation(data=data,
+                                                         feature_names=feature_names,
+                                                         path_to_json=path,
+                                                         all_cells=all_cells,
+                                                         protocols=protocols,
+                                                         path_to_csv=path_to_csv,
+                                                         cell_model=cell_model,
+                                                         test_size=test_size,
+                                                         read_json_files=read_json_files,
+                                                         threshold_detector=threshold_detector)
 
     # Classes are species, brain area, cell type such as Mouse Amygdala PC
     short_labels = [label.split(' AP')[0] for label in y_train_val]
@@ -531,14 +547,14 @@ if __name__ == "__main__":
     num_classes = len(class_labels)
 
     # Hyperparameter tuning
-    best_model = hyperparameter_tuning(X_train_val=X_train_val, train_val_data=train_val_data,
-                                       feature_names=feature_names, model_type=model_type, cell_model=cell_model,
+    best_model = hyperparameter_tuning(train_val_data=train_val_data, feature_names=feature_names,
+                                       model_type=model_type,
                                        num_classes=num_classes, epochs=epochs, oversampling=oversampling,
-                                       random_state=random_state)
+                                       test_size=test_size, random_state=random_state)
 
     # Create prediction
     y_pred_test = model_fitting(X_train_val=X_train_val, X_test=X_test, y_train_val=y_train_val, best_model=best_model,
-                                model_type=model_type, num_classes=num_classes, epochs=epochs, oversampling=oversampling)
+                                model_type=model_type, epochs=epochs, oversampling=oversampling)
 
     # Compute, display and save results
     plot_results(y_test=y_test, y_pred_test=y_pred_test, output_figure_path=output_figure_path,
